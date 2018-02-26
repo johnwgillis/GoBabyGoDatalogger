@@ -1,0 +1,2 @@
+# do not keep actual credentials in the repo
+mqttConfig.h
