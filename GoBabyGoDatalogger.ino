@@ -9,6 +9,8 @@
 #include "Adafruit_MQTT_FONA.h"
 #include "mqttConfig.h"
 
+#define DEBUG_MODE 1 // 0 for normal and 1 for debug; when debugging, it won't go into sleep mode
+
 /*************************** FONA Pins ***************************************/
 
 // Default pins for Feather 32u4 FONA
@@ -29,13 +31,14 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 /*************************** Datalogger Thresholds ***************************/
 
 #define SLEEP_MODE_DELAY 1000 // delay in ms between checks of the car power state 
-#define PWR_OFF_THRES 200 // from 0 to 1023
+#define PWR_OFF_THRES 200 // from 0 to 1023 relative to ground to 3.3V (through voltage divider on datalogger shield)
 
+#define DELAY_BETWEEN_LOOPS 60000 // delay in ms between computation loops
 
 /************ Global State (you don't need to change this!) ******************/
 
 // Setup the FONA MQTT class by passing in the FONA class and MQTT server and login details.
-Adafruit_MQTT_FONA mqtt(&fona, MQTT_SERVER, MQTT_SERVERPORT, MQTT_USERNAME, MQTT_PASSWORD);
+Adafruit_MQTT_FONA mqtt(&fona, MQTT_SERVER, MQTT_SERVERPORT, MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD);
 
 // FONAconnect is a helper function that sets up the FONA and connects to
 // the GPRS network. See the fonahelper.cpp tab above for the source!
@@ -81,8 +84,11 @@ void setup() {
   Serial.println(F("Connected to Cellular!"));
 
   Watchdog.reset();
-  delay(5000);  // wait a few seconds to stabilize connection
+  delay(2000);  // wait a few seconds to stabilize connection
   Watchdog.reset();
+
+  
+  printIPAddress();
 }
 
 uint32_t x=0; // dummy counter
@@ -114,6 +120,11 @@ void loop() {
 
   // Check if sleep mode is needed
   handleSleepMode();
+
+  //Rate limit loop time
+  Watchdog.reset();
+  delay(DELAY_BETWEEN_LOOPS);
+  Watchdog.reset();
 }
 
 // Reads the sensors and publishes the data to MQTT and SD card
@@ -201,8 +212,14 @@ void handleSleepMode() {
   // Need to feed the watchdog throughout (except for when low-power sleeping)
   Watchdog.reset();
 
+  // TODO
+  // Check for Big Button inactivity
+
   // If car is off
-  if( analogRead(PWR_SWITCH) < PWR_OFF_THRES ) {
+  if( analogRead(PWR_SWITCH) < PWR_OFF_THRES && ( !(DEBUG_MODE) )) {
+
+    Serial.println("Entering LOW POWER SLEEP MODE!");
+    
     // Prepare for sleep mode
     prepareForSleep();
     
@@ -212,7 +229,7 @@ void handleSleepMode() {
       Watchdog.sleep(SLEEP_MODE_DELAY);
     }
 
-    // Reset Arduino using the Watchdog (to start back up the FONA and MQTT
+    // Reset Arduino using the Watchdog (to start back up the FONA and MQTT)
     resetSystemUsingWatchdog();
     
   }
@@ -255,3 +272,39 @@ void prepareForSleep() {
   //     which is more efficent but not exposed through the library
 }
 
+// Prints the public IP Address for debugging
+void printIPAddress() {
+// read website URL
+        uint16_t statuscode;
+        int16_t length;
+        char url[80] = "dynamicdns.park-your-domain.com/getip";
+
+        //flushSerial();
+        //Serial.println(F("NOTE: in beta! Use small webpages to read!"));
+        //Serial.println(F("URL to read (e.g. www.adafruit.com/testwifi/index.html):"));
+        //Serial.print(F("http://")); readline(url, 79);
+        Serial.println(url);
+
+        Serial.println(F("****"));
+        if (!fona.HTTP_GET_start(url, &statuscode, (uint16_t *)&length)) {
+          Serial.println("Failed!");
+          return;
+        }
+        while (length > 0) {
+          while (fona.available()) {
+            char c = fona.read();
+
+            // Serial.write is too slow, we'll write directly to Serial register!
+#if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__)
+            loop_until_bit_is_set(UCSR0A, UDRE0); /* Wait until data register empty. */
+            UDR0 = c;
+#else
+            Serial.write(c);
+#endif
+            length--;
+            if (! length) break;
+          }
+        }
+        Serial.println(F("\n****"));
+        fona.HTTP_GET_end();
+}

@@ -2,6 +2,8 @@
 // Create on: February 9, 2018
 // Author: John Gillis (jgillis@jgillis.com)
 
+// Change the following 0 to 1 for use as the real config
+#if 0
 
 /************************* MQTT Config ************************************/
 
@@ -22,3 +24,5 @@
 #define FONA_APN       ""
 #define FONA_USERNAME  ""
 #define FONA_PASSWORD  ""
+
+#endif
