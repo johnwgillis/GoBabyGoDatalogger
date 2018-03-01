@@ -33,12 +33,12 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 #define SLEEP_MODE_DELAY 1000 // delay in ms between checks of the car power state 
 #define PWR_OFF_THRES 200 // from 0 to 1023 relative to ground to 3.3V (through voltage divider on datalogger shield)
 
-#define DELAY_BETWEEN_LOOPS 60000 // delay in ms between computation loops
+#define DELAY_BETWEEN_LOOPS 1000 // delay in ms between computation loops
 
 /************ Global State (you don't need to change this!) ******************/
 
 // Setup the FONA MQTT class by passing in the FONA class and MQTT server and login details.
-Adafruit_MQTT_FONA mqtt(&fona, MQTT_SERVER, MQTT_SERVERPORT, MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD);
+Adafruit_MQTT_FONA mqtt(&fona, "things.ubidots.com", 1883, "A1E-80mievRXk6jxxqypokytwVda5U6dNN", "");
 
 // FONAconnect is a helper function that sets up the FONA and connects to
 // the GPRS network. See the fonahelper.cpp tab above for the source!
@@ -46,10 +46,13 @@ boolean FONAconnect(const __FlashStringHelper *apn, const __FlashStringHelper *u
 
 /****************************** Feeds ***************************************/
 // Notice MQTT paths for Cayenne follow the form: v1/<username>/things/<client_id>/data/<channel_id>
-#define FEED_SENSOR_PATH "v1/" MQTT_USERNAME "/things/" MQTT_CLIENT_ID "/data"
+#define FEED_SENSOR_PATH_CAYENNE "v1/" MQTT_USERNAME "/things/" MQTT_CLIENT_ID "/data"
+
+// Notice MQTT paths for Ubidots follow the form: v1.6/devices/{LABEL_DEVICE}/{LABEL_VARIABLE}
+#define FEED_SENSOR_PATH_UBIDOTS "/v1.6/devices/gobabygo-datalogger/dummy-counter"
 
 // Setup a feed called dummy_counter for publishing on channel 1
-Adafruit_MQTT_Publish dummy_counter = Adafruit_MQTT_Publish(&mqtt, FEED_SENSOR_PATH "/1");
+Adafruit_MQTT_Publish dummy_counter = Adafruit_MQTT_Publish(&mqtt, FEED_SENSOR_PATH_UBIDOTS, MQTT_QOS_1);
 
 /*************************** Sketch Code ************************************/
 
@@ -131,13 +134,17 @@ void loop() {
 void readSensorsAndPublish() {
   
   // Now we can publish stuff!
+  x++;
   Serial.print(F("\nSending dummy_counter val "));
   Serial.print(x);
   Serial.print("...");
   
   // Format data for Cayenne using the patter: type,unit=value
   // (https://mydevices.com/cayenne/docs/cayenne-mqtt-api/#cayenne-mqtt-api-mqtt-messaging-topics)
-  String dataToPublish = "analog_sensor," + String(x++, 3); // Displays value with 3 decimal places
+  //String dataToPublish = "analog_sensor," + String(x++, 3); // Displays value with 3 decimal places
+
+  String dataToPublish = "{\"value\":" + String(x) + "}";
+  Serial.print(dataToPublish.c_str());
   
   if (! dummy_counter.publish(dataToPublish.c_str())) {
     Serial.println(F("Failed"));
