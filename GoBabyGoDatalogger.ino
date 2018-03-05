@@ -38,21 +38,18 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 /************ Global State (you don't need to change this!) ******************/
 
 // Setup the FONA MQTT class by passing in the FONA class and MQTT server and login details.
-Adafruit_MQTT_FONA mqtt(&fona, "things.ubidots.com", 1883, "A1E-80mievRXk6jxxqypokytwVda5U6dNN", "");
+Adafruit_MQTT_FONA mqtt(&fona, MQTT_SERVER, MQTT_SERVERPORT, MQTT_USERNAME, MQTT_PASSWORD);
 
 // FONAconnect is a helper function that sets up the FONA and connects to
 // the GPRS network. See the fonahelper.cpp tab above for the source!
 boolean FONAconnect(const __FlashStringHelper *apn, const __FlashStringHelper *username, const __FlashStringHelper *password);
 
 /****************************** Feeds ***************************************/
-// Notice MQTT paths for Cayenne follow the form: v1/<username>/things/<client_id>/data/<channel_id>
-#define FEED_SENSOR_PATH_CAYENNE "v1/" MQTT_USERNAME "/things/" MQTT_CLIENT_ID "/data"
-
 // Notice MQTT paths for Ubidots follow the form: v1.6/devices/{LABEL_DEVICE}/{LABEL_VARIABLE}
-#define FEED_SENSOR_PATH_UBIDOTS "/v1.6/devices/gobabygo-datalogger/dummy-counter"
+#define FEED_SENSOR_PATH_UBIDOTS "/v1.6/devices/gobabygo-datalogger"
 
-// Setup a feed called dummy_counter for publishing on channel 1
-Adafruit_MQTT_Publish dummy_counter = Adafruit_MQTT_Publish(&mqtt, FEED_SENSOR_PATH_UBIDOTS, MQTT_QOS_1);
+// Setup a feed for the device
+Adafruit_MQTT_Publish device_feed = Adafruit_MQTT_Publish(&mqtt, FEED_SENSOR_PATH_UBIDOTS, MQTT_QOS_1);
 
 /*************************** Sketch Code ************************************/
 
@@ -138,15 +135,13 @@ void readSensorsAndPublish() {
   Serial.print(F("\nSending dummy_counter val "));
   Serial.print(x);
   Serial.print("...");
-  
-  // Format data for Cayenne using the patter: type,unit=value
-  // (https://mydevices.com/cayenne/docs/cayenne-mqtt-api/#cayenne-mqtt-api-mqtt-messaging-topics)
-  //String dataToPublish = "analog_sensor," + String(x++, 3); // Displays value with 3 decimal places
 
-  String dataToPublish = "{\"value\":" + String(x) + "}";
+  // Format data for Ubidots using the example pattern: {"temperature":[{"value": 10, "timestamp":1464661369000}, {"value": 12, "timestamp":1464661369999}], "humidity": 50}
+  // (https://ubidots.com/docs/api/mqtt.html#publish-values-to-a-device)
+  String dataToPublish = "{\"dummy_counter\":" + String(x) + "}";
   Serial.print(dataToPublish.c_str());
   
-  if (! dummy_counter.publish(dataToPublish.c_str())) {
+  if (! device_feed.publish(dataToPublish.c_str())) {
     Serial.println(F("Failed"));
     txfailures++;
   } else {

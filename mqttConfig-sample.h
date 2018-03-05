@@ -7,11 +7,11 @@
 
 /************************* MQTT Config ************************************/
 
-#define MQTT_SERVER           "mqtt.mydevices.com"  // Cayenne server name.
-#define MQTT_SERVERPORT       1883  // Cayenne IO port.
-#define MQTT_USERNAME         ""  // Cayenne username
-#define MQTT_PASSWORD         ""  // Cayenne password
-#define MQTT_CLIENT_ID        ""  // Cayenne client id
+#define MQTT_SERVER           "things.ubidots.com"  // MQTT server name
+#define MQTT_SERVERPORT       1883  // MQTT IO port
+#define MQTT_USERNAME         ""  // MQTT username
+#define MQTT_PASSWORD         ""  // MQTT password
+#define MQTT_CLIENT_ID        ""  // MQTT client id
 
 
 /************************* APN Config *************************************/
