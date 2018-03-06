@@ -6,6 +6,8 @@
 #include <SoftwareSerial.h>
 #include "Adafruit_FONA.h"
 
+#define MAXNETWORKWAIT 6 // in seconds for max time to wait for network to connect
+
 #define halt(s) { Serial.println(F( s )); while(1);  }
 
 extern Adafruit_FONA fona;
@@ -26,12 +28,18 @@ boolean FONAconnect(const __FlashStringHelper *apn, const __FlashStringHelper *u
   Serial.println(F("FONA is OK"));
   Watchdog.reset();
   Serial.println(F("Checking for network..."));
+  int startTime = millis();
   while (fona.getNetworkStatus() != 1) {
    delay(500);
+   if((millis() - startTime) > (MAXNETWORKWAIT*1000)) {
+    Serial.println(F("Failed to connect to network"));
+    Watchdog.reset(); 
+    return false;
+   }
   }
 
   Watchdog.reset();
-  delay(5000);  // wait a few seconds to stabilize connection
+  delay(3000);  // wait a few seconds to stabilize connection
   Watchdog.reset();
   
   fona.setGPRSNetworkSettings(apn, username, password);
@@ -40,7 +48,7 @@ boolean FONAconnect(const __FlashStringHelper *apn, const __FlashStringHelper *u
   fona.enableGPRS(false);
   
   Watchdog.reset();
-  delay(5000);  // wait a few seconds to stabilize connection
+  delay(3000);  // wait a few seconds to stabilize connection
   Watchdog.reset();
 
   Serial.println(F("Enabling GPRS"));

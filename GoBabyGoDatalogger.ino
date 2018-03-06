@@ -55,11 +55,19 @@ Adafruit_MQTT_Publish device_feed = Adafruit_MQTT_Publish(&mqtt, FEED_SENSOR_PAT
 
 // How many transmission failures in a row we're willing to be ok with before reset
 uint8_t txfailures = 0;
-#define MAXTXFAILURES 10
 
 #define WATCHDOGTIMEOUT 8000 // in ms
-#define MQTTCONNECTINITWAIT 5 // in seconds
-#define MAXMQTTRETRIES 5 // in times so about (5*2^5+5*2^4+5*2^3+5*2^2+5*2^1+5*2^0)/60 = 5.25 minutes until reset
+
+#define MAXFONARETRIES 1 // max number of retries to connect to FONA
+#define MAXMQTTRETRIES 2 // max number of tries to connect to MQTT
+
+bool fonaConnected = false;
+bool mqttConnected = false;
+
+struct SensorData {
+  uint32_t timestamp = 0; // which is DateTime::unixtime * 1000
+  int dummy_counter = 0;
+} sensorData;
 
 void setup() {
   // Watchdog is set to 8 seconds
@@ -76,15 +84,22 @@ void setup() {
   Watchdog.reset();
   
   // Initialise the FONA module
-  
-  while (! FONAconnect(F(FONA_APN), F(FONA_USERNAME), F(FONA_PASSWORD))) {
+  int fonaConnectAttempts = 0;
+  while (!FONAconnect(F(FONA_APN), F(FONA_USERNAME), F(FONA_PASSWORD)) && fonaConnectAttempts < MAXFONARETRIES ) {
     Serial.println("Retrying FONA");
+    fonaConnectAttempts++;
   }
 
-  Serial.println(F("Connected to Cellular!"));
+  if(fonaConnectAttempts>=MAXFONARETRIES) {
+    Serial.println(F("Failed to connect to cellular!"));
+    fonaConnected = false;
+  } else {
+    Serial.println(F("Connected to Cellular!"));
+    fonaConnected = true;
+  }
 
   Watchdog.reset();
-  delay(2000);  // wait a few seconds to stabilize connection
+  delay(1000);  // wait a few seconds to stabilize connection
   Watchdog.reset();
 
   
@@ -97,48 +112,83 @@ void loop() {
   // Make sure to reset watchdog every loop iteration!
   Watchdog.reset();
 
+  // Read all sensors
+  readSensors();
+
+  // Write to SD Card
+  writeToSDCard();
+
+  // Update braking feedback
+  updateBrakingFeedback();
+
+  // Publish over Cellular
+  // TODO: make this run only on certain iterations
+  publishOverCellular();
+
+  // Handle sleep mode
+  handleSleepMode();
+
+  // Wait until next loop start time
+  Watchdog.reset();
+  delay(DELAY_BETWEEN_LOOPS); // TODO: dynamically calculate delay for fixed rate times
+  Watchdog.reset();
+  
+}
+
+// Reads the sensors into the sensorData struct
+void readSensors() {
+  // TODO
+
+  // "Read" a dummy sensor
+  sensorData.dummy_counter++;
+  Serial.print(F("\nRead in dummy_counter val "));
+  Serial.println(sensorData.dummy_counter);
+  
+  return;
+}
+
+// Writes the latest sensor data onto the SD Card
+void writeToSDCard() {
+  // TODO
+  return;
+}
+
+// Updates the state of the braking relays and leds
+void updateBrakingFeedback() {
+  // TODO
+
+  // Update LEDs
+
+  // Update Relays
+  
+  return;
+}
+
+// Publishes over cellular via MQTT
+void publishOverCellular() {
+  //TODO
+
+  Watchdog.reset();
+
   // Ensure the connection to the MQTT server is alive (this will make the first
   // connection and automatically reconnect when disconnected).  See the MQTT_connect
   // function definition further below.
   MQTT_connect();
 
   Watchdog.reset();
-  
-  readSensorsAndPublish();
-  
-  // Check if over MAXTXFAILURES limit
-  if( txfailures > MAXTXFAILURES ) {
-    // Reset Arduino using the Watchdog
-    resetSystemUsingWatchdog();
+
+  if(mqttConnected == false) {
+    // Not connected to MQTT so don't bother trying to send data
+    return;
   }
 
-  Watchdog.reset();
-
-  updateDistanceAndStopCheck();
-
-  Watchdog.reset();
-
-  // Check if sleep mode is needed
-  handleSleepMode();
-
-  //Rate limit loop time
-  Watchdog.reset();
-  delay(DELAY_BETWEEN_LOOPS);
-  Watchdog.reset();
-}
-
-// Reads the sensors and publishes the data to MQTT and SD card
-void readSensorsAndPublish() {
-  
-  // Now we can publish stuff!
-  x++;
   Serial.print(F("\nSending dummy_counter val "));
-  Serial.print(x);
+  Serial.print(sensorData.dummy_counter);
   Serial.print("...");
 
   // Format data for Ubidots using the example pattern: {"temperature":[{"value": 10, "timestamp":1464661369000}, {"value": 12, "timestamp":1464661369999}], "humidity": 50}
   // (https://ubidots.com/docs/api/mqtt.html#publish-values-to-a-device)
-  String dataToPublish = "{\"dummy_counter\":" + String(x) + "}";
+  String dataToPublish = "{\"dummy_counter\":" + String(sensorData.dummy_counter) + "}";
   Serial.print(dataToPublish.c_str());
   
   if (! device_feed.publish(dataToPublish.c_str())) {
@@ -149,63 +199,9 @@ void readSensorsAndPublish() {
     txfailures = 0;
   }
 
-  // TOOD : fill in with real sensor logging
-
-  // Read Sensors
-
-  // Log to SD Card
-
-  // Log to MQTT
+  Watchdog.reset();
   
   return;
-}
-
-
-// Processes distance data and outputs via relays and LEDs
-void updateDistanceAndStopCheck() {
-  // TODO
-
-  // Read Distances
-
-  // Read Motor Output Direction
-
-  // Update LEDs
-
-  // Update Relays
-  
-  return;
-}
-
-// Function to connect and reconnect as necessary to the MQTT server.
-// Should be called in the loop function and it will take care if connecting.
-void MQTT_connect() {
-  int8_t ret;
-
-  // Stop if already connected.
-  if (mqtt.connected()) {
-    return;
-  }
-
-  Serial.print("Connecting to MQTT... ");
-
-  Watchdog.disable();
-
-  int retrySeconds = MQTTCONNECTINITWAIT;
-  while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
-    Serial.println(mqtt.connectErrorString(ret));
-    Serial.println("Retrying MQTT connection in "+ String(retrySeconds) +" seconds...");
-    mqtt.disconnect();
-    
-    if( retrySeconds > (MQTTCONNECTINITWAIT * pow(2,MAXMQTTRETRIES) ) ) {
-      // Reset due to MAX MQTT RETRIES reached
-      resetSystemUsingWatchdog();
-    }
-    
-    delay(retrySeconds*1000);  // wait
-    
-    retrySeconds = retrySeconds * 2; // Progressive backoff
-  }
-  Serial.println("MQTT Connected!");
 }
 
 // Checks if the car is off and enters a low-power sleep mode (which takes about 5 seconds)
@@ -238,6 +234,47 @@ void handleSleepMode() {
 
   // Will never reach here since the system is reset
   return;
+}
+
+// Function to connect and reconnect as necessary to the MQTT server.
+// Should be called in the loop function and it will take care if connecting.
+void MQTT_connect() {
+  if(fonaConnected == false) {
+    // Fona is not connected to cellular so don't bother trying MQTT
+    mqttConnected = false;
+    return;
+  }
+  
+  int8_t ret;
+
+  // Stop if already connected.
+  if (mqtt.connected()) {
+    return;
+  }
+
+  Serial.print("Connecting to MQTT... ");
+
+  Watchdog.reset();
+
+  int mqttConnectionAttempts = 0;
+  while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
+    Serial.println(mqtt.connectErrorString(ret));
+    Serial.println("Retrying MQTT connection in one second...");
+    mqtt.disconnect();
+    mqttConnectionAttempts++;
+
+    if(mqttConnectionAttempts >= MAXMQTTRETRIES) {
+      Serial.println("MQTT connection failed!");
+      mqttConnected = false;
+      return;
+    }
+    
+    Watchdog.reset();
+    delay(1000);  // wait a second before trying again
+    Watchdog.reset();
+  }
+  Serial.println("MQTT Connected!");
+  mqttConnected = true;
 }
 
 // Causes a system reset using the Watchdog
