@@ -3,7 +3,7 @@
 // Author: John Gillis (jgillis@jgillis.com)
 
 #define DEBUG_MODE 1 // 0 for normal and 1 for debug; when debugging, it won't go into sleep mode
-#define CELLULAR_ENABLE 0 // 1 for normal operations and 0 for disabling cellular use
+#define CELLULAR_ENABLE 0 // 1 for normal operations (without NeoPixel) and 0 for disabling cellular use
 
 #include <Adafruit_SleepyDog.h>
 #include <SoftwareSerial.h>
@@ -17,6 +17,10 @@
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_FONA.h"
 #include "mqttConfig.h"
+
+#else
+#include <Adafruit_NeoPixel.h>
+
 #endif
 
 /*************************** FONA Pins ***************************************/
@@ -47,6 +51,8 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 #define MEDIUM_FILTER_WINDOW_SIZE 5 // Window size of the median filter (odd number, 1 = no filtering)
 
 #define RELAYS_PIN A4
+
+#define NEOPIXEL_PIN 12
 
 #define BNO055_IMU_ADDRESS 55
 
@@ -83,6 +89,13 @@ Adafruit_BNO055 bno = Adafruit_BNO055(BNO055_IMU_ADDRESS);
 // Create an object instance of the SharpDistSensor class for stair and wall sensors
 SharpDistSensor stairSensor(STAIR_SENSOR_PIN, MEDIUM_FILTER_WINDOW_SIZE);
 SharpDistSensor wallSensor(WALL_SENSOR_PIN, MEDIUM_FILTER_WINDOW_SIZE);
+
+#if !(CELLULAR_ENABLE)
+
+#define PIXEL_COUNT 16
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(PIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+
+#endif
 
 struct DevicesConnected {
   bool fona = false;
@@ -156,9 +169,9 @@ void setup() {
 
 #else
 
-  // Disable Fona Key Power
-  pinMode(FONA_KEY, OUTPUT);
-  digitalWrite(FONA_KEY, LOW);
+  // Initialize all pixels to 'off'
+  strip.begin();
+  strip.show();
   
 #endif
 
@@ -256,14 +269,17 @@ void writeToSDCard() {
 
 // Updates the state of the braking relays and leds
 void updateBrakingFeedback() {
-  // Update LEDs
-  
-
-  // Update Relays
+  // Update Relays and LEDs
   if(sensorData.stair_distance > STAIR_CUTOFF_DISTANCE) {
     digitalWrite(RELAYS_PIN, HIGH);
+    #if !(CELLULAR_ENABLE)
+    colorWipeLeds(strip.Color(255, 0, 0), 5);  // Red
+    #endif
   } else {
     digitalWrite(RELAYS_PIN, LOW);
+    #if !(CELLULAR_ENABLE)
+    colorWipeLeds(strip.Color(0, 0, 0), 50);    // Black/off
+    #endif
   }
   
   return;
@@ -490,3 +506,14 @@ void printIPAddress() {
 
         #endif
 }
+
+#if !(CELLULAR_ENABLE)
+// Fill the dots one after the other with a color
+void colorWipeLeds(uint32_t c, uint8_t wait) {
+  for(uint16_t i=0; i<strip.numPixels(); i++) {
+    strip.setPixelColor(i, c);
+    strip.show();
+    delay(wait);
+  }
+}
+#endif
