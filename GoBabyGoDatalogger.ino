@@ -7,6 +7,7 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
 #include <utility/imumaths.h>
+#include <SharpDistSensor.h>
 #include "Adafruit_FONA.h"
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_FONA.h"
@@ -31,12 +32,21 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 #define INFRARED_POWER 11
 #define PWR_SWITCH A3
 
+#define STAIR_SENSOR_PIN A7
+#define STAIR_CUTOFF_DISTANCE 10 // will cut off power via relays when the distance is greater than this (in mm)
+#define WALL_SENSOR_PIN A10
+#define WALL_LED_MAP_MAX 10 // distance (in mm) in which the led display will begin display
+#define WALL_LED_MAP_MIN 1 // distance (in mm) in which the led display will be at full display
+#define MEDIUM_FILTER_WINDOW_SIZE 5 // Window size of the median filter (odd number, 1 = no filtering)
+
+#define BNO055_IMU_ADDRESS 55
+
 /*************************** Datalogger Thresholds ***************************/
 
 #define SLEEP_MODE_DELAY 1000 // delay in ms between checks of the car power state 
 #define PWR_OFF_THRES 200 // from 0 to 1023 relative to ground to 3.3V (through voltage divider on datalogger shield)
 
-#define DELAY_BETWEEN_LOOPS 100 // delay in ms between computation loops
+#define DELAY_BETWEEN_LOOPS 20 // delay in ms between computation loops
 
 /************ Global State (you don't need to change this!) ******************/
 
@@ -57,7 +67,11 @@ Adafruit_MQTT_Publish device_feed = Adafruit_MQTT_Publish(&mqtt, FEED_SENSOR_PAT
 
 /*************************** Sensor Variables *******************************/
 
-Adafruit_BNO055 bno = Adafruit_BNO055(55);
+Adafruit_BNO055 bno = Adafruit_BNO055(BNO055_IMU_ADDRESS);
+
+// Create an object instance of the SharpDistSensor class for stair and wall sensors
+SharpDistSensor stairSensor(STAIR_SENSOR_PIN, MEDIUM_FILTER_WINDOW_SIZE);
+SharpDistSensor wallSensor(WALL_SENSOR_PIN, MEDIUM_FILTER_WINDOW_SIZE);
 
 struct DevicesConnected {
   bool fona = false;
@@ -70,6 +84,8 @@ struct SensorData {
   int dummy_counter = 0;
 
   double quaternion_w, quaternion_x, quaternion_y, quaternion_z = 0;
+
+  unsigned int stair_distance, wall_distance = 0;
 } sensorData;
 
 
@@ -83,8 +99,8 @@ uint8_t txfailures = 0;
 #define MAXFONARETRIES 1 // max number of retries to connect to FONA
 #define MAXMQTTRETRIES 2 // max number of tries to connect to MQTT
 
-#define SAMPLE_PERIOD 1 // Desired sample period in seconds
-#define CELLULAR_PERIOD 2 // Desired sample period in seconds
+#define SAMPLE_PERIOD 1000 // Desired sample period in ms
+#define CELLULAR_PERIOD 2000 // Desired sample period in ms
 uint32_t last_sample_time = 0;
 uint32_t last_cellular_time = 0;
 
@@ -134,6 +150,10 @@ void setup() {
   } else {
     devicesConnected.imu = true;
   }
+
+  // Init stair and wall infrared sensors
+  stairSensor.setModel(SharpDistSensor::GP2Y0A60SZLF_5V);
+  wallSensor.setModel(SharpDistSensor::GP2Y0A60SZLF_5V);
   
   // Print out the IP Address for debugging
   printIPAddress();
@@ -155,7 +175,6 @@ void loop() {
   updateBrakingFeedback();
 
   // Publish over Cellular
-  // TODO: make this run only on certain iterations
   publishOverCellular();
 
   // Handle sleep mode
@@ -183,6 +202,10 @@ void readSensors() {
     sensorData.quaternion_z = currentQuat.z();
   }
 
+  // Read stair and wall distance sensors
+  sensorData.stair_distance = stairSensor.getDist();
+  sensorData.wall_distance = wallSensor.getDist();
+
   // TODO
   
   return;
@@ -190,7 +213,7 @@ void readSensors() {
 
 // Writes the latest sensor data onto the SD Card
 void writeToSDCard() {
-  if((millis() - last_sample_time)/1000 > CELLULAR_PERIOD) {
+  if((millis() - last_sample_time) > CELLULAR_PERIOD) {
     
     // Write sensor data to SD card
 
@@ -216,7 +239,7 @@ void updateBrakingFeedback() {
 
 // Publishes over cellular via MQTT
 void publishOverCellular() {
-  if(!((millis() - last_sample_time)/1000 > SAMPLE_PERIOD)) {
+  if(!((millis() - last_sample_time) > SAMPLE_PERIOD)) {
     return;
   }
 
@@ -243,14 +266,17 @@ void publishOverCellular() {
   String dataToPublish = "{:";
 
   // Load in sensors
-  dataToPublish += "\"dummy_counter\":" + String(sensorData.dummy_counter);
+  dataToPublish += "\"dummy_counter\":" + String(sensorData.dummy_counter) + ",";
   
   if(devicesConnected.imu) {
-    dataToPublish += "\"quaternion_w\":" + String(sensorData.quaternion_w);
-    dataToPublish += "\"quaternion_x\":" + String(sensorData.quaternion_x);
-    dataToPublish += "\"quaternion_y\":" + String(sensorData.quaternion_y);
-    dataToPublish += "\"quaternion_z\":" + String(sensorData.quaternion_z);
+    dataToPublish += "\"quaternion_w\":" + String(sensorData.quaternion_w) + ",";
+    dataToPublish += "\"quaternion_x\":" + String(sensorData.quaternion_x) + ",";
+    dataToPublish += "\"quaternion_y\":" + String(sensorData.quaternion_y) + ",";
+    dataToPublish += "\"quaternion_z\":" + String(sensorData.quaternion_z) + ",";
   }
+
+  dataToPublish += "\"stair_distance\":" + String(sensorData.stair_distance) + ",";
+  dataToPublish += "\"wall_distance\":" + String(sensorData.wall_distance);
   
   dataToPublish += "}";
   Serial.print(dataToPublish.c_str());
@@ -258,6 +284,7 @@ void publishOverCellular() {
   if (! device_feed.publish(dataToPublish.c_str())) {
     Serial.println(F("Failed"));
     txfailures++;
+    devicesConnected.mqtt = false;
   } else {
     Serial.println(F("OK!"));
     txfailures = 0;
