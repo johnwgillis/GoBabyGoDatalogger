@@ -4,6 +4,9 @@
 
 #include <Adafruit_SleepyDog.h>
 #include <SoftwareSerial.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>
+#include <utility/imumaths.h>
 #include "Adafruit_FONA.h"
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_FONA.h"
@@ -33,7 +36,7 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 #define SLEEP_MODE_DELAY 1000 // delay in ms between checks of the car power state 
 #define PWR_OFF_THRES 200 // from 0 to 1023 relative to ground to 3.3V (through voltage divider on datalogger shield)
 
-#define DELAY_BETWEEN_LOOPS 1000 // delay in ms between computation loops
+#define DELAY_BETWEEN_LOOPS 100 // delay in ms between computation loops
 
 /************ Global State (you don't need to change this!) ******************/
 
@@ -51,6 +54,25 @@ boolean FONAconnect(const __FlashStringHelper *apn, const __FlashStringHelper *u
 // Setup a feed for the device
 Adafruit_MQTT_Publish device_feed = Adafruit_MQTT_Publish(&mqtt, FEED_SENSOR_PATH_UBIDOTS, MQTT_QOS_1);
 
+
+/*************************** Sensor Variables *******************************/
+
+Adafruit_BNO055 bno = Adafruit_BNO055(55);
+
+struct DevicesConnected {
+  bool fona = false;
+  bool mqtt = false;
+  bool imu = false;
+} devicesConnected;
+
+struct SensorData {
+  uint32_t timestamp = 0; // which is DateTime::unixtime * 1000
+  int dummy_counter = 0;
+
+  double quaternion_w, quaternion_x, quaternion_y, quaternion_z = 0;
+} sensorData;
+
+
 /*************************** Sketch Code ************************************/
 
 // How many transmission failures in a row we're willing to be ok with before reset
@@ -61,13 +83,11 @@ uint8_t txfailures = 0;
 #define MAXFONARETRIES 1 // max number of retries to connect to FONA
 #define MAXMQTTRETRIES 2 // max number of tries to connect to MQTT
 
-bool fonaConnected = false;
-bool mqttConnected = false;
+#define SAMPLE_PERIOD 1 // Desired sample period in seconds
+#define CELLULAR_PERIOD 2 // Desired sample period in seconds
+uint32_t last_sample_time = 0;
+uint32_t last_cellular_time = 0;
 
-struct SensorData {
-  uint32_t timestamp = 0; // which is DateTime::unixtime * 1000
-  int dummy_counter = 0;
-} sensorData;
 
 void setup() {
   // Watchdog is set to 8 seconds
@@ -92,17 +112,30 @@ void setup() {
 
   if(fonaConnectAttempts>=MAXFONARETRIES) {
     Serial.println(F("Failed to connect to cellular!"));
-    fonaConnected = false;
+    devicesConnected.fona = false;
   } else {
     Serial.println(F("Connected to Cellular!"));
-    fonaConnected = true;
+    devicesConnected.fona = true;
   }
 
   Watchdog.reset();
   delay(1000);  // wait a few seconds to stabilize connection
   Watchdog.reset();
 
+  // Init the SD Card
+  // TODO
+
+  // Init the sensors
+  // TODO : finsih all sensors init
+  if(!bno.begin()) {
+    /* There was a problem detecting the BNO055 ... check your connections */
+    Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
+    devicesConnected.imu = false;
+  } else {
+    devicesConnected.imu = true;
+  }
   
+  // Print out the IP Address for debugging
   printIPAddress();
 }
 
@@ -130,26 +163,43 @@ void loop() {
 
   // Wait until next loop start time
   Watchdog.reset();
-  delay(DELAY_BETWEEN_LOOPS); // TODO: dynamically calculate delay for fixed rate times
+  delay(DELAY_BETWEEN_LOOPS);
   Watchdog.reset();
-  
 }
 
 // Reads the sensors into the sensorData struct
 void readSensors() {
-  // TODO
-
   // "Read" a dummy sensor
   sensorData.dummy_counter++;
   Serial.print(F("\nRead in dummy_counter val "));
   Serial.println(sensorData.dummy_counter);
+
+  // Read IMU
+  if(devicesConnected.imu) {
+    imu::Quaternion currentQuat = bno.getQuat();
+    sensorData.quaternion_w = currentQuat.w();
+    sensorData.quaternion_x = currentQuat.x();
+    sensorData.quaternion_y = currentQuat.y();
+    sensorData.quaternion_z = currentQuat.z();
+  }
+
+  // TODO
   
   return;
 }
 
 // Writes the latest sensor data onto the SD Card
 void writeToSDCard() {
-  // TODO
+  if((millis() - last_sample_time)/1000 > CELLULAR_PERIOD) {
+    
+    // Write sensor data to SD card
+
+    // TODO
+
+
+    last_sample_time = millis();
+  }
+  
   return;
 }
 
@@ -166,7 +216,9 @@ void updateBrakingFeedback() {
 
 // Publishes over cellular via MQTT
 void publishOverCellular() {
-  //TODO
+  if(!((millis() - last_sample_time)/1000 > SAMPLE_PERIOD)) {
+    return;
+  }
 
   Watchdog.reset();
 
@@ -177,7 +229,7 @@ void publishOverCellular() {
 
   Watchdog.reset();
 
-  if(mqttConnected == false) {
+  if(devicesConnected.mqtt == false) {
     // Not connected to MQTT so don't bother trying to send data
     return;
   }
@@ -188,7 +240,19 @@ void publishOverCellular() {
 
   // Format data for Ubidots using the example pattern: {"temperature":[{"value": 10, "timestamp":1464661369000}, {"value": 12, "timestamp":1464661369999}], "humidity": 50}
   // (https://ubidots.com/docs/api/mqtt.html#publish-values-to-a-device)
-  String dataToPublish = "{\"dummy_counter\":" + String(sensorData.dummy_counter) + "}";
+  String dataToPublish = "{:";
+
+  // Load in sensors
+  dataToPublish += "\"dummy_counter\":" + String(sensorData.dummy_counter);
+  
+  if(devicesConnected.imu) {
+    dataToPublish += "\"quaternion_w\":" + String(sensorData.quaternion_w);
+    dataToPublish += "\"quaternion_x\":" + String(sensorData.quaternion_x);
+    dataToPublish += "\"quaternion_y\":" + String(sensorData.quaternion_y);
+    dataToPublish += "\"quaternion_z\":" + String(sensorData.quaternion_z);
+  }
+  
+  dataToPublish += "}";
   Serial.print(dataToPublish.c_str());
   
   if (! device_feed.publish(dataToPublish.c_str())) {
@@ -200,6 +264,8 @@ void publishOverCellular() {
   }
 
   Watchdog.reset();
+
+  last_cellular_time = millis();
   
   return;
 }
@@ -239,9 +305,9 @@ void handleSleepMode() {
 // Function to connect and reconnect as necessary to the MQTT server.
 // Should be called in the loop function and it will take care if connecting.
 void MQTT_connect() {
-  if(fonaConnected == false) {
+  if(devicesConnected.fona == false) {
     // Fona is not connected to cellular so don't bother trying MQTT
-    mqttConnected = false;
+    devicesConnected.mqtt = false;
     return;
   }
   
@@ -265,7 +331,7 @@ void MQTT_connect() {
 
     if(mqttConnectionAttempts >= MAXMQTTRETRIES) {
       Serial.println("MQTT connection failed!");
-      mqttConnected = false;
+      devicesConnected.mqtt = false;
       return;
     }
     
@@ -274,7 +340,7 @@ void MQTT_connect() {
     Watchdog.reset();
   }
   Serial.println("MQTT Connected!");
-  mqttConnected = true;
+  devicesConnected.mqtt = true;
 }
 
 // Causes a system reset using the Watchdog
