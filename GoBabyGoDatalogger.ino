@@ -2,20 +2,25 @@
 // Create on: February 9, 2018
 // Author: John Gillis (jgillis@jgillis.com)
 
+#define DEBUG_MODE 1 // 0 for normal and 1 for debug; when debugging, it won't go into sleep mode
+#define CELLULAR_ENABLE 0 // 1 for normal operations and 0 for disabling cellular use
+
 #include <Adafruit_SleepyDog.h>
 #include <SoftwareSerial.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
 #include <utility/imumaths.h>
 #include <SharpDistSensor.h>
+
+#if CELLULAR_ENABLE
 #include "Adafruit_FONA.h"
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_FONA.h"
 #include "mqttConfig.h"
-
-#define DEBUG_MODE 1 // 0 for normal and 1 for debug; when debugging, it won't go into sleep mode
+#endif
 
 /*************************** FONA Pins ***************************************/
+#if CELLULAR_ENABLE
 
 // Default pins for Feather 32u4 FONA
 #define FONA_RX  9
@@ -25,6 +30,8 @@ SoftwareSerial fonaSS = SoftwareSerial(FONA_TX, FONA_RX);
 
 Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 
+#endif
+
 /*************************** Datalogger Pins *********************************/
 
 // Pins specific to the datalogger shield
@@ -32,12 +39,14 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 #define INFRARED_POWER 11
 #define PWR_SWITCH A3
 
-#define STAIR_SENSOR_PIN A7
+#define STAIR_SENSOR_PIN A5
 #define STAIR_CUTOFF_DISTANCE 10 // will cut off power via relays when the distance is greater than this (in mm)
 #define WALL_SENSOR_PIN A10
 #define WALL_LED_MAP_MAX 10 // distance (in mm) in which the led display will begin display
 #define WALL_LED_MAP_MIN 1 // distance (in mm) in which the led display will be at full display
 #define MEDIUM_FILTER_WINDOW_SIZE 5 // Window size of the median filter (odd number, 1 = no filtering)
+
+#define RELAYS_PIN A4
 
 #define BNO055_IMU_ADDRESS 55
 
@@ -49,6 +58,7 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 #define DELAY_BETWEEN_LOOPS 20 // delay in ms between computation loops
 
 /************ Global State (you don't need to change this!) ******************/
+#if CELLULAR_ENABLE
 
 // Setup the FONA MQTT class by passing in the FONA class and MQTT server and login details.
 Adafruit_MQTT_FONA mqtt(&fona, MQTT_SERVER, MQTT_SERVERPORT, MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD);
@@ -64,6 +74,7 @@ boolean FONAconnect(const __FlashStringHelper *apn, const __FlashStringHelper *u
 // Setup a feed for the device
 Adafruit_MQTT_Publish device_feed = Adafruit_MQTT_Publish(&mqtt, FEED_SENSOR_PATH_UBIDOTS, MQTT_QOS_1);
 
+#endif
 
 /*************************** Sensor Variables *******************************/
 
@@ -117,6 +128,11 @@ void setup() {
   pinMode(INFRARED_POWER, OUTPUT);
   digitalWrite(INFRARED_POWER, HIGH);
 
+#if CELLULAR_ENABLE
+  // Enable Fona Key Power
+  pinMode(FONA_KEY, OUTPUT);
+  digitalWrite(FONA_KEY, HIGH);
+
   Watchdog.reset();
   
   // Initialise the FONA module
@@ -138,6 +154,14 @@ void setup() {
   delay(1000);  // wait a few seconds to stabilize connection
   Watchdog.reset();
 
+#else
+
+  // Disable Fona Key Power
+  pinMode(FONA_KEY, OUTPUT);
+  digitalWrite(FONA_KEY, LOW);
+  
+#endif
+
   // Init the SD Card
   // TODO
 
@@ -148,13 +172,17 @@ void setup() {
     Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
     devicesConnected.imu = false;
   } else {
+    Serial.print("BNO055 IMU detected and connected!");
     devicesConnected.imu = true;
   }
 
-  // Init stair and wall infrared sensors
+  // Init stair and wall infrared sensors and relays
   stairSensor.setModel(SharpDistSensor::GP2Y0A60SZLF_5V);
   wallSensor.setModel(SharpDistSensor::GP2Y0A60SZLF_5V);
-  
+  pinMode(RELAYS_PIN, OUTPUT);
+  digitalWrite(RELAYS_PIN, LOW);
+
+
   // Print out the IP Address for debugging
   printIPAddress();
 }
@@ -213,7 +241,7 @@ void readSensors() {
 
 // Writes the latest sensor data onto the SD Card
 void writeToSDCard() {
-  if((millis() - last_sample_time) > CELLULAR_PERIOD) {
+  if((millis() - last_sample_time) > SAMPLE_PERIOD) {
     
     // Write sensor data to SD card
 
@@ -228,20 +256,30 @@ void writeToSDCard() {
 
 // Updates the state of the braking relays and leds
 void updateBrakingFeedback() {
-  // TODO
-
   // Update LEDs
+  
 
   // Update Relays
+  if(sensorData.stair_distance > STAIR_CUTOFF_DISTANCE) {
+    digitalWrite(RELAYS_PIN, HIGH);
+  } else {
+    digitalWrite(RELAYS_PIN, LOW);
+  }
   
   return;
 }
 
 // Publishes over cellular via MQTT
 void publishOverCellular() {
-  if(!((millis() - last_sample_time) > SAMPLE_PERIOD)) {
+  if(!((millis() - last_cellular_time) > CELLULAR_PERIOD)) {
     return;
   }
+
+  if(devicesConnected.fona == false) {
+    // Not connected to FONA so don't bother trying to send data
+    return;
+  }
+
 
   Watchdog.reset();
 
@@ -280,7 +318,8 @@ void publishOverCellular() {
   
   dataToPublish += "}";
   Serial.print(dataToPublish.c_str());
-  
+
+  #if CELLULAR_ENABLE
   if (! device_feed.publish(dataToPublish.c_str())) {
     Serial.println(F("Failed"));
     txfailures++;
@@ -289,6 +328,7 @@ void publishOverCellular() {
     Serial.println(F("OK!"));
     txfailures = 0;
   }
+  #endif
 
   Watchdog.reset();
 
@@ -337,6 +377,8 @@ void MQTT_connect() {
     devicesConnected.mqtt = false;
     return;
   }
+
+  #if CELLULAR_ENABLE
   
   int8_t ret;
 
@@ -368,6 +410,8 @@ void MQTT_connect() {
   }
   Serial.println("MQTT Connected!");
   devicesConnected.mqtt = true;
+
+  #endif
 }
 
 // Causes a system reset using the Watchdog
@@ -381,7 +425,9 @@ void prepareForSleep() {
   Watchdog.reset();
   
   // Disconnect MQTT
-  mqtt.disconnect();
+  #if CELLULAR_ENABLE
+    mqtt.disconnect();
+  #endif
   
   delay(1000);  // wait 1 second
   Watchdog.reset();
@@ -406,7 +452,9 @@ void prepareForSleep() {
 
 // Prints the public IP Address for debugging
 void printIPAddress() {
-// read website URL
+    #if CELLULAR_ENABLE
+    
+    // read website URL
         uint16_t statuscode;
         int16_t length;
         char url[80] = "dynamicdns.park-your-domain.com/getip";
@@ -439,4 +487,6 @@ void printIPAddress() {
         }
         Serial.println(F("\n****"));
         fona.HTTP_GET_end();
+
+        #endif
 }
