@@ -40,19 +40,19 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 
 // Pins specific to the datalogger shield
 #define FONA_KEY 12
-#define INFRARED_POWER 11
+#define INFRARED_POWER 12
 #define PWR_SWITCH A3
 
-#define STAIR_SENSOR_PIN A5
-#define STAIR_CUTOFF_DISTANCE 10 // will cut off power via relays when the distance is greater than this (in mm)
-#define WALL_SENSOR_PIN A10
+#define STAIR_SENSOR_PIN A10
+#define STAIR_CUTOFF_DISTANCE 200 // will cut off power via relays when the distance is greater than this (in mm)
+#define WALL_SENSOR_PIN A5
 #define WALL_LED_MAP_MAX 10 // distance (in mm) in which the led display will begin display
 #define WALL_LED_MAP_MIN 1 // distance (in mm) in which the led display will be at full display
 #define MEDIUM_FILTER_WINDOW_SIZE 5 // Window size of the median filter (odd number, 1 = no filtering)
 
 #define RELAYS_PIN A4
 
-#define NEOPIXEL_PIN 12
+#define NEOPIXEL_PIN 11
 
 #define BNO055_IMU_ADDRESS 55
 
@@ -278,7 +278,7 @@ void updateBrakingFeedback() {
   } else {
     digitalWrite(RELAYS_PIN, LOW);
     #if !(CELLULAR_ENABLE)
-    colorWipeLeds(strip.Color(0, 0, 0), 50);    // Black/off
+    colorWipeLeds(strip.Color(0, 0, 0), 5);    // Black/off
     #endif
   }
   
