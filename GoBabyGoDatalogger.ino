@@ -117,6 +117,7 @@ struct DevicesConnected {
 
 struct SensorData {
   uint32_t timestamp = 0; // which is DateTime::unixtime * 1000
+  unsigned long uptime = 0; // which is the numeber of milliseconds since last reboot
 
   double quaternion_w, quaternion_x, quaternion_y, quaternion_z = 0;
 
@@ -137,7 +138,7 @@ uint8_t txfailures = 0;
 #define MAXFONARETRIES 1 // max number of retries to connect to FONA
 #define MAXMQTTRETRIES 2 // max number of tries to connect to MQTT
 
-#define SAMPLE_PERIOD 1000 // Desired sample period in ms
+#define SAMPLE_PERIOD 100 // Desired sample period in ms for the SD card
 #define CELLULAR_PERIOD 2000 // Desired sample period in ms
 uint32_t last_sample_time = 0;
 uint32_t last_cellular_time = 0;
@@ -203,7 +204,7 @@ void setup() {
       
       // Create the file and add the header row
       datalogFile = SD.open(DATA_LOGGER_FILE, FILE_WRITE);
-      datalogFile.println("timestamp,quaternion_w,quaternion_x,quaternion_y,quaternion_z,stair_distance,wall_distance"); // header row
+      datalogFile.println("timestamp,uptime,quaternion_w,quaternion_x,quaternion_y,quaternion_z,stair_distance,wall_distance"); // header row
       datalogFile.close();
 
       // Check that the file was created successfully
@@ -297,6 +298,9 @@ void readSensors() {
     sensorData.timestamp = (uint32_t)( (DateTime(F(__DATE__), F(__TIME__)) + TimeSpan((int32_t)(millis()/1000))).unixtime() ); // time adjusted from at compile since last boot (in seconds) since midnight 1/1/1970
   }
 
+  // Read uptime
+  sensorData.uptime = millis();
+
   // Read IMU
   if(devicesConnected.imu) {
     imu::Quaternion currentQuat = bno.getQuat();
@@ -325,6 +329,7 @@ void writeToSDCard() {
     }
     
     // Write sensor data to SD card
+    Serial.print("Writing to the SD card...");
 
     datalogFile = SD.open(DATA_LOGGER_FILE, FILE_WRITE);
     String dataToWrite = "";
@@ -332,15 +337,17 @@ void writeToSDCard() {
 
     // timestamp
     dataToWrite += String(sensorData.timestamp) + ",";
+    // uptime
+    dataToWrite += String(sensorData.uptime) + ",";
 
     // quaternion_w
-    dataToWrite += String(sensorData.quaternion_w) + ",";
+    dataToWrite += String(sensorData.quaternion_w, 8) + ",";
     // quaternion_x
-    dataToWrite += String(sensorData.quaternion_x) + ",";
+    dataToWrite += String(sensorData.quaternion_x, 8) + ",";
     // quaternion_y
-    dataToWrite += String(sensorData.quaternion_y) + ",";
+    dataToWrite += String(sensorData.quaternion_y, 8) + ",";
     // quaternion_z
-    dataToWrite += String(sensorData.quaternion_z) + ",";
+    dataToWrite += String(sensorData.quaternion_z, 8) + ",";
 
     // stair_distance
     dataToWrite += String(sensorData.stair_distance) + ",";
@@ -412,10 +419,10 @@ void publishOverCellular() {
   // Load in sensors
   
   if(devicesConnected.imu) {
-    dataToPublish += "\"quaternion_w\":" + String(sensorData.quaternion_w) + ",";
-    dataToPublish += "\"quaternion_x\":" + String(sensorData.quaternion_x) + ",";
-    dataToPublish += "\"quaternion_y\":" + String(sensorData.quaternion_y) + ",";
-    dataToPublish += "\"quaternion_z\":" + String(sensorData.quaternion_z) + ",";
+    dataToPublish += "\"quaternion_w\":" + String(sensorData.quaternion_w, 8) + ",";
+    dataToPublish += "\"quaternion_x\":" + String(sensorData.quaternion_x, 8) + ",";
+    dataToPublish += "\"quaternion_y\":" + String(sensorData.quaternion_y, 8) + ",";
+    dataToPublish += "\"quaternion_z\":" + String(sensorData.quaternion_z, 8) + ",";
   }
 
   dataToPublish += "\"stair_distance\":" + String(sensorData.stair_distance) + ",";
