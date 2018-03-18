@@ -223,8 +223,14 @@ void setup() {
   }
 
   // Init the real time clock
-  Wire.begin();
-  if(realTimeClock.begin()) {
+  realTimeClock.begin();
+  // Check that the real time clock is actually connected
+  Wire.beginTransmission(PCF8523_ADDRESS);
+  byte error = Wire.endTransmission();
+  if(error != 0) {
+    Serial.println("Couldn't find RTC");
+    devicesConnected.rtc = false;
+  } else {
     if (!realTimeClock.initialized()) {
       Serial.println("RTC is NOT running!");
       // following line sets the RTC to the date & time this sketch was compiled
@@ -233,9 +239,6 @@ void setup() {
     }
     Serial.println("RTC ready.");
     devicesConnected.rtc = true;
-  } else {
-    Serial.println("Couldn't find RTC");
-    devicesConnected.rtc = false;
   }
 
   // Init the sensors
