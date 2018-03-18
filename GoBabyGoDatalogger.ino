@@ -111,6 +111,7 @@ struct DevicesConnected {
   bool fona = false;
   bool mqtt = false;
   bool sdcard = false;
+  bool rtc = false;
   bool imu = false;
 } devicesConnected;
 
@@ -124,7 +125,7 @@ struct SensorData {
 
 File datalogFile;
 
-DS1307 realTimeClock;
+RTC_PCF8523 realTimeClock;
 
 /*************************** Sketch Code ************************************/
 
@@ -148,8 +149,8 @@ void setup() {
   
   Serial.begin(115200);
 
-  Serial.println(F("GoBabyGo FONA MQTT datalogger by John Gillis (jgillis@jgillis.com)"));
-
+  Serial.println(F("GoBabyGo datalogger by John Gillis (jgillis@jgillis.com)"));
+  
   // Enable Infrared Power
   pinMode(INFRARED_POWER, OUTPUT);
   digitalWrite(INFRARED_POWER, HIGH);
@@ -189,13 +190,12 @@ void setup() {
 #endif
 
   // Init the SD Card
-  Serial.print("Initializing SD card...");
   // see if the card is present and can be initialized:
   if (!SD.begin(SD_CARD_CHIP_SELECT_PIN)) {
-    Serial.println("Card failed or not present.");
+    Serial.println("SD card failed or not present.");
     devicesConnected.sdcard = false;
   } else {
-    Serial.println("Card initialized.");
+    Serial.println("SD card initialized.");
     
     // Init datalog file
     if(!SD.exists(DATA_LOGGER_FILE)) {
@@ -224,22 +224,28 @@ void setup() {
 
   // Init the real time clock
   Wire.begin();
-  realTimeClock.begin();
-  if (!realTimeClock.isrunning()) {
-    Serial.println("RTC is NOT running! Reseting to sketch compile time.");
-    // following line sets the RTC to the date & time this sketch was compiled
-    realTimeClock.adjust(DateTime(__DATE__, __TIME__));
+  if(realTimeClock.begin()) {
+    if (!realTimeClock.initialized()) {
+      Serial.println("RTC is NOT running!");
+      // following line sets the RTC to the date & time this sketch was compiled
+      // Note: the new adjusted time will be off of the true unix time by the time zone of the compiler
+      realTimeClock.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    }
+    Serial.println("RTC ready.");
+    devicesConnected.rtc = true;
+  } else {
+    Serial.println("Couldn't find RTC");
+    devicesConnected.rtc = false;
   }
-  Serial.println("RTC ready.");
 
   // Init the sensors
   // TODO : finsih all sensors init
   if(!bno.begin()) {
     /* There was a problem detecting the BNO055 ... check your connections */
-    Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
+    Serial.print("No BNO055 detected!");
     devicesConnected.imu = false;
   } else {
-    Serial.print("BNO055 IMU detected and connected!");
+    Serial.print("IMU connected!");
     devicesConnected.imu = true;
   }
 
@@ -282,7 +288,11 @@ void loop() {
 // Reads the sensors into the sensorData struct
 void readSensors() {
   // Read the current time from real time clock
-  sensorData.timestamp = (uint32_t)( realTimeClock.now().unixtime() ); // time (in seconds) since midnight 1/1/1970
+  if(devicesConnected.rtc) {
+    sensorData.timestamp = (uint32_t)( realTimeClock.now().unixtime() ); // time (in seconds) since midnight 1/1/1970
+  } else {
+    sensorData.timestamp = (uint32_t)( (DateTime(F(__DATE__), F(__TIME__)) + TimeSpan((int32_t)(millis()/1000))).unixtime() ); // time adjusted from at compile since last boot (in seconds) since midnight 1/1/1970
+  }
 
   // Read IMU
   if(devicesConnected.imu) {
@@ -364,6 +374,8 @@ void updateBrakingFeedback() {
 
 // Publishes over cellular via MQTT
 void publishOverCellular() {
+  #if CELLULAR_ENABLE
+  
   if(!((millis() - last_cellular_time) > CELLULAR_PERIOD)) {
     return;
   }
@@ -423,6 +435,8 @@ void publishOverCellular() {
   Watchdog.reset();
 
   last_cellular_time = millis();
+
+  #endif
   
   return;
 }
