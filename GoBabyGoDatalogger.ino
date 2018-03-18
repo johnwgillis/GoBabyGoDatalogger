@@ -16,6 +16,9 @@
 #include <SPI.h>
 #include <SD.h>
 
+#include <Wire.h>
+#include "RTClib.h"
+
 #if CELLULAR_ENABLE
 #include "Adafruit_FONA.h"
 #include "Adafruit_MQTT.h"
@@ -113,7 +116,6 @@ struct DevicesConnected {
 
 struct SensorData {
   uint32_t timestamp = 0; // which is DateTime::unixtime * 1000
-  int dummy_counter = 0;
 
   double quaternion_w, quaternion_x, quaternion_y, quaternion_z = 0;
 
@@ -121,6 +123,8 @@ struct SensorData {
 } sensorData;
 
 File datalogFile;
+
+DS1307 realTimeClock;
 
 /*************************** Sketch Code ************************************/
 
@@ -199,7 +203,7 @@ void setup() {
       
       // Create the file and add the header row
       datalogFile = SD.open(DATA_LOGGER_FILE, FILE_WRITE);
-      datalogFile.println("timestamp,dummy_counter,quaternion_w,quaternion_x,quaternion_y,quaternion_z,stair_distance,wall_distance"); // header row
+      datalogFile.println("timestamp,quaternion_w,quaternion_x,quaternion_y,quaternion_z,stair_distance,wall_distance"); // header row
       datalogFile.close();
 
       // Check that the file was created successfully
@@ -217,6 +221,16 @@ void setup() {
       devicesConnected.sdcard = true;
     }
   }
+
+  // Init the real time clock
+  Wire.begin();
+  realTimeClock.begin();
+  if (!realTimeClock.isrunning()) {
+    Serial.println("RTC is NOT running! Reseting to sketch compile time.");
+    // following line sets the RTC to the date & time this sketch was compiled
+    realTimeClock.adjust(DateTime(__DATE__, __TIME__));
+  }
+  Serial.println("RTC ready.");
 
   // Init the sensors
   // TODO : finsih all sensors init
@@ -239,8 +253,6 @@ void setup() {
   // Print out the IP Address for debugging
   printIPAddress();
 }
-
-uint32_t x=0; // dummy counter
 
 void loop() {
   // Make sure to reset watchdog every loop iteration!
@@ -269,10 +281,8 @@ void loop() {
 
 // Reads the sensors into the sensorData struct
 void readSensors() {
-  // "Read" a dummy sensor
-  sensorData.dummy_counter++;
-  Serial.print(F("\nRead in dummy_counter val "));
-  Serial.println(sensorData.dummy_counter);
+  // Read the current time from real time clock
+  sensorData.timestamp = (uint32_t)( realTimeClock.now().unixtime() ); // time (in seconds) since midnight 1/1/1970
 
   // Read IMU
   if(devicesConnected.imu) {
@@ -308,10 +318,7 @@ void writeToSDCard() {
 
 
     // timestamp
-    dataToWrite += String(0) + ","; // TODO: add in actual timestamp
-
-    // dummy_counter
-    dataToWrite += String(sensorData.dummy_counter) + ",";
+    dataToWrite += String(sensorData.timestamp) + ",";
 
     // quaternion_w
     dataToWrite += String(sensorData.quaternion_w) + ",";
@@ -381,11 +388,6 @@ void publishOverCellular() {
     return;
   }
 
-  Serial.print(F("\nSending dummy_counter val "));
-  Serial.print(sensorData.dummy_counter);
-  Serial.print("...");
-
-
   // TODO: add in client based timestamp sending according to Ubidots documentation
 
   // Format data for Ubidots using the example pattern: {"temperature":[{"value": 10, "timestamp":1464661369000}, {"value": 12, "timestamp":1464661369999}], "humidity": 50}
@@ -393,7 +395,6 @@ void publishOverCellular() {
   String dataToPublish = "{:";
 
   // Load in sensors
-  dataToPublish += "\"dummy_counter\":" + String(sensorData.dummy_counter) + ",";
   
   if(devicesConnected.imu) {
     dataToPublish += "\"quaternion_w\":" + String(sensorData.quaternion_w) + ",";
