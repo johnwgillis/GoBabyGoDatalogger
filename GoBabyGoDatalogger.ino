@@ -3,14 +3,18 @@
 // Author: John Gillis (jgillis@jgillis.com)
 
 #define DEBUG_MODE 1 // 0 for normal and 1 for debug; when debugging, it won't go into sleep mode
-#define CELLULAR_ENABLE 0 // 1 for normal operations (without NeoPixel) and 0 for disabling cellular use
+#define CELLULAR_ENABLE 0 // 1 for normal operations (without NeoPixel) and 0 for disabling cellular use (with NeoPixel)
 
 #include <Adafruit_SleepyDog.h>
 #include <SoftwareSerial.h>
+
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
 #include <utility/imumaths.h>
 #include <SharpDistSensor.h>
+
+#include <SPI.h>
+#include <SD.h>
 
 #if CELLULAR_ENABLE
 #include "Adafruit_FONA.h"
@@ -56,6 +60,9 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 
 #define BNO055_IMU_ADDRESS 55
 
+#define SD_CARD_CHIP_SELECT_PIN 5
+#define DATA_LOGGER_FILE "datalog.csv" // string name of the csv file to write on the SD Card
+
 /*************************** Datalogger Thresholds ***************************/
 
 #define SLEEP_MODE_DELAY 1000 // delay in ms between checks of the car power state 
@@ -100,6 +107,7 @@ Adafruit_NeoPixel strip = Adafruit_NeoPixel(PIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB +
 struct DevicesConnected {
   bool fona = false;
   bool mqtt = false;
+  bool sdcard = false;
   bool imu = false;
 } devicesConnected;
 
@@ -112,6 +120,7 @@ struct SensorData {
   unsigned int stair_distance, wall_distance = 0;
 } sensorData;
 
+File datalogFile;
 
 /*************************** Sketch Code ************************************/
 
@@ -176,7 +185,38 @@ void setup() {
 #endif
 
   // Init the SD Card
-  // TODO
+  Serial.print("Initializing SD card...");
+  // see if the card is present and can be initialized:
+  if (!SD.begin(SD_CARD_CHIP_SELECT_PIN)) {
+    Serial.println("Card failed or not present.");
+    devicesConnected.sdcard = false;
+  } else {
+    Serial.println("Card initialized.");
+    
+    // Init datalog file
+    if(!SD.exists(DATA_LOGGER_FILE)) {
+      Serial.println("Creating data logger file...");
+      
+      // Create the file and add the header row
+      datalogFile = SD.open(DATA_LOGGER_FILE, FILE_WRITE);
+      datalogFile.println("timestamp,dummy_counter,quaternion_w,quaternion_x,quaternion_y,quaternion_z,stair_distance,wall_distance"); // header row
+      datalogFile.close();
+
+      // Check that the file was created successfully
+      if(SD.exists(DATA_LOGGER_FILE)) {
+        Serial.println("Data logger file ready.");
+        devicesConnected.sdcard = true;
+      } else {
+        Serial.println("Couldn't create data logger file.");
+        devicesConnected.sdcard = false;
+      }
+      
+    } else {
+      // Already created and ready to go
+      Serial.println("Data logger file ready.");
+      devicesConnected.sdcard = true;
+    }
+  }
 
   // Init the sensors
   // TODO : finsih all sensors init
@@ -255,11 +295,41 @@ void readSensors() {
 // Writes the latest sensor data onto the SD Card
 void writeToSDCard() {
   if((millis() - last_sample_time) > SAMPLE_PERIOD) {
+
+    if(devicesConnected.sdcard == false) {
+      // Not connected to SD Card and file correctly so don't bother trying to write data
+      return;
+    }
     
     // Write sensor data to SD card
 
-    // TODO
+    datalogFile = SD.open(DATA_LOGGER_FILE, FILE_WRITE);
+    String dataToWrite = "";
 
+
+    // timestamp
+    dataToWrite += String(0) + ","; // TODO: add in actual timestamp
+
+    // dummy_counter
+    dataToWrite += String(sensorData.dummy_counter) + ",";
+
+    // quaternion_w
+    dataToWrite += String(sensorData.quaternion_w) + ",";
+    // quaternion_x
+    dataToWrite += String(sensorData.quaternion_x) + ",";
+    // quaternion_y
+    dataToWrite += String(sensorData.quaternion_y) + ",";
+    // quaternion_z
+    dataToWrite += String(sensorData.quaternion_z) + ",";
+
+    // stair_distance
+    dataToWrite += String(sensorData.stair_distance) + ",";
+    // wall_distance
+    dataToWrite += String(sensorData.wall_distance);
+    
+    
+    datalogFile.println(dataToWrite); // header row
+    datalogFile.close();
 
     last_sample_time = millis();
   }
@@ -314,6 +384,9 @@ void publishOverCellular() {
   Serial.print(F("\nSending dummy_counter val "));
   Serial.print(sensorData.dummy_counter);
   Serial.print("...");
+
+
+  // TODO: add in client based timestamp sending according to Ubidots documentation
 
   // Format data for Ubidots using the example pattern: {"temperature":[{"value": 10, "timestamp":1464661369000}, {"value": 12, "timestamp":1464661369999}], "humidity": 50}
   // (https://ubidots.com/docs/api/mqtt.html#publish-values-to-a-device)
