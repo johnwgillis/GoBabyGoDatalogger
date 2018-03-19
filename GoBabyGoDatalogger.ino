@@ -53,8 +53,6 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 #define STAIR_SENSOR_PIN A10
 #define STAIR_CUTOFF_DISTANCE 200 // will cut off power via relays when the distance is greater than this (in mm)
 #define WALL_SENSOR_PIN A5
-#define WALL_LED_MAP_MAX 10 // distance (in mm) in which the led display will begin display
-#define WALL_LED_MAP_MIN 1 // distance (in mm) in which the led display will be at full display
 #define MEDIUM_FILTER_WINDOW_SIZE 5 // Window size of the median filter (odd number, 1 = no filtering)
 
 #define RELAYS_PIN A4
@@ -186,6 +184,7 @@ void setup() {
 
   // Initialize all pixels to 'off'
   strip.begin();
+  strip.setBrightness(50);
   strip.show();
   
 #endif
@@ -313,6 +312,7 @@ void readSensors() {
   // Read stair and wall distance sensors
   sensorData.stair_distance = stairSensor.getDist();
   sensorData.wall_distance = wallSensor.getDist();
+  Serial.println(sensorData.wall_distance);
 
   // TODO
   
@@ -329,7 +329,7 @@ void writeToSDCard() {
     }
     
     // Write sensor data to SD card
-    Serial.print("Writing to the SD card...");
+    Serial.println("Writing to the SD card...");
 
     datalogFile = SD.open(DATA_LOGGER_FILE, FILE_WRITE);
     String dataToWrite = "";
@@ -368,18 +368,20 @@ void writeToSDCard() {
 void updateBrakingFeedback() {
   // Update Relays and LEDs
   if(sensorData.stair_distance > STAIR_CUTOFF_DISTANCE) {
-    digitalWrite(RELAYS_PIN, HIGH);
+    digitalWrite(RELAYS_PIN, LOW);
     #if !(CELLULAR_ENABLE)
     colorWipeLeds(strip.Color(255, 0, 0), 5);  // Red
     #endif
   } else {
-    digitalWrite(RELAYS_PIN, LOW);
+    digitalWrite(RELAYS_PIN, HIGH);
     #if !(CELLULAR_ENABLE)
-    colorWipeLeds(strip.Color(0, 0, 0), 5);    // Black/off
-    #endif
-
+    //colorWipeLeds(strip.Color(0, 0, 0), 5);    // Black/off
+    
     // Adjust LEDs based on wall distance
-    colorWipeLeds(strip.Color(map(sensorData.wall_distance, 0, 1500, 0, 255), 0, 0), 5);
+    int mappedRed = map(sensorData.wall_distance, 100, 1500, 255, 0);
+    int mappedGreen = map(sensorData.wall_distance, 100, 1500, 0, 255);
+    colorWipeLeds(strip.Color(mappedRed, mappedGreen, 0), 5);
+    #endif
   }
   
   return;
