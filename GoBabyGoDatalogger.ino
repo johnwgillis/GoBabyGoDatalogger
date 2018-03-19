@@ -377,6 +377,9 @@ void updateBrakingFeedback() {
     #if !(CELLULAR_ENABLE)
     colorWipeLeds(strip.Color(0, 0, 0), 5);    // Black/off
     #endif
+
+    // Adjust LEDs based on wall distance
+    colorWipeLeds(strip.Color(map(sensorData.wall_distance, 0, 1500, 0, 255), 0, 0), 5);
   }
   
   return;
