@@ -51,7 +51,7 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 #define PWR_SWITCH A3
 
 #define STAIR_SENSOR_PIN A10
-#define STAIR_CUTOFF_DISTANCE 200 // will cut off power via relays when the distance is greater than this (in mm)
+#define STAIR_CUTOFF_DISTANCE 600 // will cut off power via relays when the distance is greater than this (in mm)
 #define WALL_SENSOR_PIN A5
 #define MEDIUM_FILTER_WINDOW_SIZE 5 // Window size of the median filter (odd number, 1 = no filtering)
 
